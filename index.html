@@ -1,0 +1,529 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getFirestore, collection, doc, setDoc, onSnapshot, 
+  addDoc, updateDoc, deleteDoc, query
+} from 'firebase/firestore';
+import { 
+  LayoutDashboard, Package, ShoppingCart, Users, 
+  Plus, Search, Trash2, Printer, DollarSign, 
+  HardHat, Briefcase, TrendingDown, TrendingUp, Save,
+  Truck, Wallet, AlertTriangle, ChevronRight, Building2,
+  X, CheckCircle2, FileText, History
+} from 'lucide-react';
+
+// --- CONFIGURATION DYNAMIQUE (Utilisation des variables d'environnement Canvas) ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'guimetra-construction-erp';
+
+// --- LOGO GUIMETRA ---
+const GMTLogo = ({ className }) => (
+  <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="45" stroke="#003366" strokeWidth="6" />
+    <text x="22" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">G</text>
+    <path d="M45 35 H55 V65 H45 Z" fill="#0099cc" />
+    <text x="47" y="42" fill="white" fontSize="4" fontWeight="bold">GMT</text>
+    <text x="60" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">T</text>
+    <rect x="25" y="68" width="50" height="8" fill="#003366" />
+    <text x="27" y="74" fill="white" fontSize="4" fontWeight="bold" letterSpacing="1">CONSTRUCTION</text>
+  </svg>
+);
+
+// --- COMPOSANTS INTERFACE ---
+const formatGNF = (val) => new Intl.NumberFormat('fr-GN').format(val || 0) + ' GNF';
+
+const StatCard = ({ title, value, icon: Icon, color }) => (
+  <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-5">
+    <div className={`p-4 rounded-2xl ${color} bg-opacity-10 text-${color.includes('green') ? 'green' : color.includes('blue') ? 'blue' : color.includes('orange') ? 'orange' : 'purple'}-600`}>
+      <Icon size={24} />
+    </div>
+    <div>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
+      <p className="text-xl font-black text-slate-800">{value}</p>
+    </div>
+  </div>
+);
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [modal, setModal] = useState({ open: false, type: null });
+  const [cart, setCart] = useState([]);
+  const [invoice, setInvoice] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Authentification (PATTERN MANDATAIRE CANVAS)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Erreur d'authentification Firebase:", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Synchronisation Firestore (AVEC GUARD USER)
+  useEffect(() => {
+    if (!user) return;
+
+    // Utilisation des chemins stricts requis par Canvas
+    const productsRef = collection(db, 'artifacts', appId, 'public', 'data', 'products');
+    const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
+    const transRef = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
+
+    const unsubProducts = onSnapshot(productsRef, (snap) => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Erreur Firestore Produits:", err));
+
+    const unsubSales = onSnapshot(salesRef, (snap) => {
+      setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Erreur Firestore Ventes:", err));
+
+    const unsubTrans = onSnapshot(transRef, (snap) => {
+      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Erreur Firestore Transactions:", err));
+
+    return () => {
+      unsubProducts();
+      unsubSales();
+      unsubTrans();
+    };
+  }, [user]);
+
+  // Fonctions Métier
+  const addToCart = (product) => {
+    const exists = cart.find(i => i.id === product.id);
+    if (exists) {
+      setCart(cart.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i));
+    } else {
+      setCart([...cart, { ...product, qty: 1 }]);
+    }
+  };
+
+  const processSale = async (clientName) => {
+    if (cart.length === 0 || !user) return;
+    try {
+      const total = cart.reduce((acc, i) => acc + (i.price * i.qty), 0);
+      const saleData = {
+        client: clientName || "Client Comptant",
+        items: cart,
+        total,
+        date: new Date().toISOString(),
+        type: 'VENTE',
+        userId: user.uid
+      };
+
+      const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), saleData);
+      
+      for (const item of cart) {
+        const p = products.find(prod => prod.id === item.id);
+        if (p) {
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', item.id), {
+            stock: Number(p.stock) - Number(item.qty)
+          });
+        }
+      }
+      
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
+        amount: total,
+        type: 'ENTREE',
+        label: `Vente #${docRef.id.slice(-5)}`,
+        date: new Date().toISOString(),
+        userId: user.uid
+      });
+
+      setInvoice({ ...saleData, id: docRef.id });
+      setCart([]);
+    } catch (err) {
+      console.error("Erreur traitement vente:", err);
+    }
+  };
+
+  const handleAddProduct = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    const fd = new FormData(e.target);
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), {
+        name: fd.get('name'),
+        price: Number(fd.get('price')),
+        stock: Number(fd.get('stock')),
+        unit: fd.get('unit'),
+        createdAt: new Date().toISOString()
+      });
+      setModal({ open: false });
+    } catch (err) {
+      console.error("Erreur ajout produit:", err);
+    }
+  };
+
+  const totalCaisse = useMemo(() => {
+    return transactions.reduce((acc, t) => acc + (t.type === 'ENTREE' ? t.amount : -t.amount), 0);
+  }, [transactions]);
+
+  if (loading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#003366] text-white">
+        <GMTLogo className="w-24 h-24 mb-6 animate-pulse" />
+        <p className="font-bold tracking-widest animate-bounce uppercase">Initialisation Guimetra Cloud...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
+      {/* Sidebar */}
+      <aside className="w-72 bg-[#003366] text-white flex flex-col p-8 shrink-0">
+        <div className="mb-12 text-center">
+          <GMTLogo className="w-20 h-20 mx-auto mb-4 bg-white p-1 rounded-full shadow-lg" />
+          <h1 className="font-black text-xl tracking-tighter">GUIMETRA</h1>
+          <p className="text-[9px] font-bold text-blue-300 uppercase tracking-[0.3em]">Construction SARL</p>
+        </div>
+
+        <nav className="flex-1 space-y-2">
+          {[
+            { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+            { id: 'inventory', label: 'Stocks Matériaux', icon: Package },
+            { id: 'pos', label: 'Caisse & Vente', icon: ShoppingCart },
+            { id: 'finance', label: 'Journal Caisse', icon: Wallet },
+            { id: 'fleet', label: 'Parc Engins', icon: Truck },
+          ].map(item => (
+            <button 
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${activeTab === item.id ? 'bg-[#0099cc] shadow-lg text-white' : 'hover:bg-white/10 text-slate-300'}`}
+            >
+              <item.icon size={20} />
+              <span className="font-bold text-sm">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        
+        <div className="mt-auto p-4 bg-blue-900/30 rounded-2xl border border-blue-800/50">
+          <p className="text-[10px] uppercase font-black text-blue-300 mb-1">Utilisateur ID</p>
+          <p className="text-[10px] font-mono break-all opacity-70">{user?.uid || 'Non authentifié'}</p>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <header className="h-20 bg-white border-b flex items-center justify-between px-10 shrink-0">
+          <h2 className="text-sm font-black uppercase tracking-widest text-slate-400">
+            {activeTab === 'dashboard' ? 'Vue d\'ensemble' : activeTab}
+          </h2>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[10px] font-black text-slate-400 uppercase">Solde Caisse</p>
+              <p className="text-lg font-black text-[#003366]">{formatGNF(totalCaisse)}</p>
+            </div>
+            <div className="h-10 w-10 bg-[#0099cc] rounded-full border-2 border-white shadow-sm flex items-center justify-center text-white font-bold">
+               MA
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-10">
+          {activeTab === 'dashboard' && (
+            <div className="space-y-10">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatCard title="Ventes Totales" value={formatGNF(sales.reduce((acc,s)=>acc+s.total,0))} icon={TrendingUp} color="bg-green-500" />
+                <StatCard title="Articles" value={products.length} icon={Package} color="bg-blue-500" />
+                <StatCard title="Alertes Stock" value={products.filter(p=>p.stock < 5).length} icon={AlertTriangle} color="bg-orange-500" />
+                <StatCard title="Opérations" value={transactions.length} icon={History} color="bg-purple-500" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                  <h3 className="font-black text-xs uppercase text-slate-400 mb-6 flex items-center gap-2">
+                    <History size={16} /> Dernières Ventes
+                  </h3>
+                  <div className="space-y-4">
+                    {sales.length === 0 ? (
+                      <p className="text-sm text-slate-400 italic">Aucune vente enregistrée</p>
+                    ) : (
+                      [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 5).map(s => (
+                        <div key={s.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                          <div>
+                            <p className="font-bold text-sm">{s.client}</p>
+                            <p className="text-[10px] text-slate-400">{new Date(s.date).toLocaleDateString()}</p>
+                          </div>
+                          <span className="font-black text-[#003366]">{formatGNF(s.total)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="bg-[#003366] p-8 rounded-[2rem] text-white flex flex-col justify-between min-h-[250px]">
+                  <div>
+                    <h3 className="text-2xl font-black mb-2">Guimetra ERP</h3>
+                    <p className="text-blue-200 text-sm italic">Connecté au Cloud Sécurisé.</p>
+                  </div>
+                  <div className="mt-8">
+                     <button onClick={() => setActiveTab('pos')} className="bg-[#0099cc] px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:scale-105 transition-transform">
+                        <Plus size={18} /> Nouvelle Vente
+                     </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'inventory' && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h3 className="text-2xl font-black text-[#003366]">Inventaire des Matériaux</h3>
+                <button onClick={() => setModal({open: true, type: 'product'})} className="bg-[#003366] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2">
+                  <Plus size={20} /> Ajouter Article
+                </button>
+              </div>
+              <div className="bg-white rounded-[2rem] border overflow-hidden shadow-sm overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 border-b">
+                    <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <th className="p-6">Désignation</th>
+                      <th className="p-6">Prix Unitaire</th>
+                      <th className="p-6">Stock Actuel</th>
+                      <th className="p-6 text-right text-transparent">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.length === 0 ? (
+                      <tr><td colSpan="4" className="p-10 text-center text-slate-400 italic">Aucun article en stock. Ajoutez-en un !</td></tr>
+                    ) : (
+                      products.map(p => (
+                        <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                          <td className="p-6">
+                            <p className="font-bold text-slate-700">{p.name}</p>
+                            <p className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">{p.unit || 'Unité'}</p>
+                          </td>
+                          <td className="p-6 font-black text-[#0099cc]">{formatGNF(p.price)}</td>
+                          <td className="p-6">
+                            <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase ${p.stock < 10 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                              {p.stock} {p.unit}
+                            </span>
+                          </td>
+                          <td className="p-6 text-right">
+                            <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', p.id))} className="text-slate-300 hover:text-red-500 transition-colors">
+                              <Trash2 size={18} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'pos' && (
+            <div className="flex flex-col lg:flex-row gap-8 h-full overflow-hidden">
+              <div className="flex-1 space-y-6 overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {products.map(p => (
+                    <button 
+                      key={p.id} 
+                      onClick={() => addToCart(p)}
+                      disabled={p.stock <= 0}
+                      className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm text-left hover:border-[#0099cc] hover:shadow-md transition-all group disabled:opacity-50"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-black text-slate-800 group-hover:text-[#0099cc] transition-colors">{p.name}</span>
+                        <Package size={16} className="text-slate-300" />
+                      </div>
+                      <p className="text-xl font-black text-[#003366]">{formatGNF(p.price)}</p>
+                      <p className="text-[10px] mt-2 text-slate-400 uppercase font-bold tracking-widest">En stock: {p.stock}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="w-full lg:w-96 bg-[#003366] rounded-[2.5rem] p-8 text-white flex flex-col shadow-xl shrink-0">
+                <div className="flex items-center gap-3 mb-8">
+                  <ShoppingCart className="text-[#0099cc]" />
+                  <h3 className="text-xl font-black">Panier</h3>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto space-y-3 min-h-[200px]">
+                  {cart.map((item, idx) => (
+                    <div key={idx} className="bg-white/5 p-4 rounded-2xl flex justify-between items-center border border-white/5">
+                      <div>
+                        <p className="font-bold text-sm">{item.name}</p>
+                        <p className="text-[10px] text-blue-300">{item.qty} x {formatGNF(item.price)}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <span className="font-black text-xs">{formatGNF(item.price * item.qty)}</span>
+                         <button onClick={() => setCart(cart.filter((_,i)=>i!==idx))} className="text-red-400 hover:bg-red-500/20 p-1 rounded-lg transition-colors"><X size={14}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 pt-8 border-t border-white/10">
+                  <div className="flex justify-between items-end mb-6">
+                    <span className="text-blue-300 text-[10px] font-black uppercase tracking-[0.2em]">Total</span>
+                    <span className="text-3xl font-black text-[#0099cc]">
+                      {formatGNF(cart.reduce((acc,i)=>acc+(i.price*i.qty),0))}
+                    </span>
+                  </div>
+                  <input 
+                    id="client-name"
+                    placeholder="Nom du Client..." 
+                    className="w-full bg-white/10 border-none rounded-2xl p-4 mb-4 text-white placeholder:text-white/30 focus:ring-2 focus:ring-[#0099cc] outline-none"
+                  />
+                  <button 
+                    onClick={() => {
+                      const input = document.getElementById('client-name');
+                      processSale(input.value);
+                      input.value = "";
+                    }}
+                    disabled={cart.length === 0}
+                    className="w-full bg-[#0099cc] py-5 rounded-2xl font-black text-lg shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    Valider la Vente
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* Modal Ajout Article */}
+      {modal.open && modal.type === 'product' && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <form onSubmit={handleAddProduct} className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl relative">
+            <button type="button" onClick={() => setModal({open:false})} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600 transition-colors"><X /></button>
+            <h3 className="text-2xl font-black text-[#003366] mb-8">Nouveau Matériau</h3>
+            <div className="space-y-5">
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Désignation</label>
+                <input name="name" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" placeholder="ex: Ciment 42.5N" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Prix Unitaire</label>
+                  <input name="price" type="number" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" placeholder="GNF" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Unité</label>
+                  <input name="unit" placeholder="Sac, Tonne..." className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Stock Initial</label>
+                <input name="stock" type="number" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" />
+              </div>
+              <button type="submit" className="w-full bg-[#003366] text-white py-5 rounded-2xl font-black text-lg mt-4 shadow-lg flex items-center justify-center gap-3 hover:bg-[#002244] transition-all">
+                <Save size={20} /> Enregistrer
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Facture Imprimable */}
+      {invoice && (
+        <div className="fixed inset-0 bg-white z-[100] p-10 flex flex-col items-center overflow-y-auto">
+          <div className="w-full max-w-2xl bg-white border p-12 shadow-sm rounded-lg relative">
+            <button onClick={() => setInvoice(null)} className="print:hidden absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-xl font-black hover:bg-red-600 transition-all">FERMER X</button>
+            
+            <div className="flex justify-between items-start border-b-4 border-[#003366] pb-8 mb-8">
+              <div className="flex gap-4 items-center">
+                <GMTLogo className="w-20 h-20" />
+                <div>
+                   <h1 className="text-2xl font-black text-[#003366]">GUIMETRA</h1>
+                   <p className="text-xs font-black uppercase text-slate-500 tracking-widest">Construction SARL</p>
+                   <p className="text-[10px] font-bold">Conakry, République de Guinée</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-black text-[#003366]">REÇU DE VENTE</p>
+                <p className="text-sm font-bold">N° {invoice.id.slice(-8).toUpperCase()}</p>
+                <p className="text-[10px] text-slate-400 mt-1">{new Date(invoice.date).toLocaleString('fr-FR')}</p>
+              </div>
+            </div>
+
+            <div className="mb-10 flex justify-between items-end">
+               <div>
+                  <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Facturé à</p>
+                  <p className="text-xl font-black text-[#003366]">{invoice.client}</p>
+               </div>
+               <div className="text-right">
+                  <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Statut</p>
+                  <p className="text-sm font-black text-green-600 uppercase tracking-widest">Payé / Livré</p>
+               </div>
+            </div>
+
+            <table className="w-full mb-10 text-left">
+              <thead>
+                <tr className="border-b-2 border-slate-900 text-[10px] uppercase font-black tracking-widest">
+                  <th className="py-4">Désignation</th>
+                  <th className="py-4 text-center">Qté</th>
+                  <th className="py-4 text-right">P.U</th>
+                  <th className="py-4 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.items.map((it, idx) => (
+                  <tr key={idx} className="border-b border-slate-100 text-sm">
+                    <td className="py-4 font-black text-slate-700">{it.name}</td>
+                    <td className="py-4 text-center font-bold">{it.qty}</td>
+                    <td className="py-4 text-right">{formatGNF(it.price)}</td>
+                    <td className="py-4 text-right font-black">{formatGNF(it.price * it.qty)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-between items-end border-t-4 border-[#003366] pt-8 bg-slate-50 p-6 rounded-b-2xl">
+              <div className="text-[9px] italic text-slate-500 w-1/2 font-bold">
+                * Les marchandises vendues et livrées ne sont ni reprises ni échangées. <br/>
+                Merci de votre confiance en Guimetra Construction.
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Net à Payer</p>
+                <p className="text-4xl font-black text-[#003366]">{formatGNF(invoice.total)}</p>
+              </div>
+            </div>
+
+            <div className="mt-24 flex justify-between px-10">
+               <div className="text-center w-40">
+                  <p className="text-[10px] uppercase font-black text-slate-400 mb-16">Signature Client</p>
+                  <div className="border-b border-slate-300"></div>
+               </div>
+               <div className="text-center w-40">
+                  <p className="text-[10px] uppercase font-black text-slate-400 mb-16">Cachet Guimetra</p>
+                  <div className="border-b border-slate-300"></div>
+               </div>
+            </div>
+            
+            <div className="mt-16 text-center print:hidden flex gap-4 justify-center">
+              <button onClick={() => window.print()} className="bg-[#003366] text-white px-10 py-5 rounded-2xl font-black flex items-center gap-3 shadow-lg hover:bg-[#002244] transition-all">
+                <Printer size={20} /> Imprimer Reçu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
