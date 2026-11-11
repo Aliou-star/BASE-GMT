@@ -1,529 +1,1137 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { 
-  getFirestore, collection, doc, setDoc, onSnapshot, 
-  addDoc, updateDoc, deleteDoc, query
-} from 'firebase/firestore';
-import { 
-  LayoutDashboard, Package, ShoppingCart, Users, 
-  Plus, Search, Trash2, Printer, DollarSign, 
-  HardHat, Briefcase, TrendingDown, TrendingUp, Save,
-  Truck, Wallet, AlertTriangle, ChevronRight, Building2,
-  X, CheckCircle2, FileText, History
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guimetra ERP</title>
+  <meta name="description" content="Gestion de boutique, stocks, caisse et parc d'engins — Guimetra Construction SARL" />
+  <meta name="theme-color" content="#003366" />
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script>window.react = window.React;</script>
+  <script src="https://unpkg.com/lucide-react@0.469.0/dist/umd/lucide-react.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <style>
+    body { background: #f8fafc; }
+    @media print {
+      body * { visibility: hidden !important; }
+      #print-area, #print-area * { visibility: visible !important; }
+      #print-area { position: absolute; left: 0; top: 0; width: 100%; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
 
-// --- CONFIGURATION DYNAMIQUE (Utilisation des variables d'environnement Canvas) ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'guimetra-construction-erp';
+  <script type="text/babel" data-presets="react">
+  const { useState, useEffect, useMemo, useRef } = React;
+  const {
+    LayoutDashboard, Package, ShoppingCart, Plus, Minus, Search, Trash2, Printer,
+    TrendingDown, TrendingUp, Save, Truck, Wallet, AlertTriangle, X, History,
+    Pencil, PackagePlus, Receipt, Download, Upload, ImagePlus, Wrench, CheckCircle2,
+    Settings, Menu
+  } = LucideReact;
 
-// --- LOGO GUIMETRA ---
-const GMTLogo = ({ className }) => (
-  <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="50" cy="50" r="45" stroke="#003366" strokeWidth="6" />
-    <text x="22" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">G</text>
-    <path d="M45 35 H55 V65 H45 Z" fill="#0099cc" />
-    <text x="47" y="42" fill="white" fontSize="4" fontWeight="bold">GMT</text>
-    <text x="60" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">T</text>
-    <rect x="25" y="68" width="50" height="8" fill="#003366" />
-    <text x="27" y="74" fill="white" fontSize="4" fontWeight="bold" letterSpacing="1">CONSTRUCTION</text>
-  </svg>
-);
+  // =========================================================================
+  //  STOCKAGE LOCAL (les données restent dans ce navigateur)
+  // =========================================================================
+  const STORAGE_PREFIX = 'guimetra-erp:';
 
-// --- COMPOSANTS INTERFACE ---
-const formatGNF = (val) => new Intl.NumberFormat('fr-GN').format(val || 0) + ' GNF';
+  const readStore = (key, fallback) => {
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  };
 
-const StatCard = ({ title, value, icon: Icon, color }) => (
-  <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-5">
-    <div className={`p-4 rounded-2xl ${color} bg-opacity-10 text-${color.includes('green') ? 'green' : color.includes('blue') ? 'blue' : color.includes('orange') ? 'orange' : 'purple'}-600`}>
-      <Icon size={24} />
-    </div>
-    <div>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
-      <p className="text-xl font-black text-slate-800">{value}</p>
-    </div>
-  </div>
-);
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [products, setProducts] = useState([]);
-  const [sales, setSales] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [modal, setModal] = useState({ open: false, type: null });
-  const [cart, setCart] = useState([]);
-  const [invoice, setInvoice] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // Authentification (PATTERN MANDATAIRE CANVAS)
-  useEffect(() => {
-    const initAuth = async () => {
+  const useStoredState = (key, fallback) => {
+    const [value, setValue] = useState(() => readStore(key, fallback));
+    useEffect(() => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Erreur d'authentification Firebase:", err);
+        localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+      } catch (e) {
+        console.error('Sauvegarde impossible (espace plein ?)', e);
       }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Synchronisation Firestore (AVEC GUARD USER)
-  useEffect(() => {
-    if (!user) return;
-
-    // Utilisation des chemins stricts requis par Canvas
-    const productsRef = collection(db, 'artifacts', appId, 'public', 'data', 'products');
-    const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
-    const transRef = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
-
-    const unsubProducts = onSnapshot(productsRef, (snap) => {
-      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Erreur Firestore Produits:", err));
-
-    const unsubSales = onSnapshot(salesRef, (snap) => {
-      setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Erreur Firestore Ventes:", err));
-
-    const unsubTrans = onSnapshot(transRef, (snap) => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Erreur Firestore Transactions:", err));
-
-    return () => {
-      unsubProducts();
-      unsubSales();
-      unsubTrans();
-    };
-  }, [user]);
-
-  // Fonctions Métier
-  const addToCart = (product) => {
-    const exists = cart.find(i => i.id === product.id);
-    if (exists) {
-      setCart(cart.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i));
-    } else {
-      setCart([...cart, { ...product, qty: 1 }]);
-    }
+    }, [key, value]);
+    return [value, setValue];
   };
 
-  const processSale = async (clientName) => {
-    if (cart.length === 0 || !user) return;
-    try {
-      const total = cart.reduce((acc, i) => acc + (i.price * i.qty), 0);
-      const saleData = {
-        client: clientName || "Client Comptant",
-        items: cart,
-        total,
-        date: new Date().toISOString(),
-        type: 'VENTE',
-        userId: user.uid
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const formatGNF = (val) => new Intl.NumberFormat('fr-FR').format(Math.round(val || 0)) + ' GNF';
+  const formatDate = (iso) => new Date(iso).toLocaleDateString('fr-FR');
+  const formatDateTime = (iso) => new Date(iso).toLocaleString('fr-FR');
+
+  const PAYMENT_METHODS = ['Espèces', 'Orange Money', 'MTN MoMo', 'Virement', 'Crédit client'];
+  const CATEGORIES = ['Ciment & Liants', 'Fer & Acier', 'Agrégats', 'Bois', 'Plomberie', 'Électricité', 'Peinture', 'Outillage', 'Autre'];
+  const EXPENSE_CATEGORIES = ['Achat marchandises', 'Carburant', 'Salaires', 'Transport', 'Entretien engins', 'Loyer', 'Divers'];
+  const FLEET_STATUS = {
+    'Disponible': 'bg-green-100 text-green-700',
+    'En mission': 'bg-blue-100 text-blue-700',
+    'En panne': 'bg-red-100 text-red-700',
+    'Entretien': 'bg-orange-100 text-orange-700',
+  };
+
+  const SAMPLE_PRODUCTS = [
+    { name: 'Ciment CPJ 42.5', category: 'Ciment & Liants', unit: 'Sac 50kg', price: 95000, cost: 85000, stock: 120, minStock: 20 },
+    { name: 'Fer à béton Ø10', category: 'Fer & Acier', unit: 'Barre 12m', price: 65000, cost: 57000, stock: 300, minStock: 50 },
+    { name: 'Fer à béton Ø12', category: 'Fer & Acier', unit: 'Barre 12m', price: 92000, cost: 82000, stock: 180, minStock: 40 },
+    { name: 'Sable lavé', category: 'Agrégats', unit: 'Benne', price: 1500000, cost: 1200000, stock: 8, minStock: 3 },
+    { name: 'Gravier 15/25', category: 'Agrégats', unit: 'Benne', price: 2500000, cost: 2100000, stock: 5, minStock: 2 },
+    { name: 'Tôle bac alu', category: 'Autre', unit: 'Feuille', price: 180000, cost: 150000, stock: 60, minStock: 15 },
+  ];
+
+  // Réduit une image importée pour qu'elle tienne dans le stockage du navigateur
+  const resizeImage = (file, maxSize = 400) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 
-      const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), saleData);
-      
-      for (const item of cart) {
-        const p = products.find(prod => prod.id === item.id);
-        if (p) {
-          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', item.id), {
-            stock: Number(p.stock) - Number(item.qty)
-          });
-        }
+  // =========================================================================
+  //  COMPOSANTS UI
+  // =========================================================================
+  const GMTLogo = ({ className, customLogo }) => customLogo ? (
+    <img src={customLogo} alt="Logo Guimetra" className={className + ' object-contain'} />
+  ) : (
+    <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="50" r="45" stroke="#003366" strokeWidth="6" />
+      <text x="22" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">G</text>
+      <path d="M45 35 H55 V65 H45 Z" fill="#0099cc" />
+      <text x="47" y="42" fill="white" fontSize="4" fontWeight="bold">GMT</text>
+      <text x="60" y="65" fill="#003366" fontSize="38" fontWeight="900" fontFamily="Arial Black">T</text>
+      <rect x="25" y="68" width="50" height="8" fill="#003366" />
+      <text x="27" y="74" fill="white" fontSize="4" fontWeight="bold" letterSpacing="1">CONSTRUCTION</text>
+    </svg>
+  );
+
+  const STAT_COLORS = {
+    green: 'bg-green-50 text-green-600',
+    blue: 'bg-blue-50 text-blue-600',
+    orange: 'bg-orange-50 text-orange-600',
+    purple: 'bg-purple-50 text-purple-600',
+    red: 'bg-red-50 text-red-600',
+  };
+
+  const StatCard = ({ title, value, icon: Icon, color, hint }) => (
+    <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-4">
+      <div className={`p-4 rounded-2xl ${STAT_COLORS[color]}`}><Icon size={24} /></div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
+        <p className="text-lg 2xl:text-xl font-black text-slate-800 leading-tight break-words">{value}</p>
+        {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
+      </div>
+    </div>
+  );
+
+  const Field = ({ label, children }) => (
+    <label className="block">
+      <span className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">{label}</span>
+      {children}
+    </label>
+  );
+
+  const inputCls = 'w-full p-3.5 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none';
+
+  const Modal = ({ title, onClose, children, wide }) => (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 no-print" onMouseDown={onClose}>
+      <div onMouseDown={(e) => e.stopPropagation()} className={`bg-white rounded-[2rem] w-full ${wide ? 'max-w-2xl' : 'max-w-md'} p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto`}>
+        <button type="button" onClick={onClose} className="absolute top-6 right-6 text-slate-400 hover:text-slate-600" aria-label="Fermer"><X /></button>
+        <h3 className="text-2xl font-black text-[#003366] mb-6 pr-8">{title}</h3>
+        {children}
+      </div>
+    </div>
+  );
+
+  const EmptyState = ({ icon: Icon, text, action }) => (
+    <div className="bg-white rounded-[2rem] border border-dashed border-slate-200 p-12 text-center">
+      <Icon size={40} className="mx-auto text-slate-300 mb-4" />
+      <p className="text-slate-400 mb-4">{text}</p>
+      {action}
+    </div>
+  );
+
+  const SearchBox = ({ value, onChange, placeholder }) => (
+    <div className="relative flex-1 min-w-[200px]">
+      <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full pl-11 pr-4 py-3 bg-white rounded-2xl border border-slate-200 focus:ring-2 focus:ring-[#0099cc] outline-none" />
+    </div>
+  );
+
+  const ProductThumb = ({ product, size = 'w-12 h-12' }) => product.image ? (
+    <img src={product.image} alt="" className={`${size} rounded-xl object-cover bg-slate-100 shrink-0`} />
+  ) : (
+    <div className={`${size} rounded-xl bg-slate-100 flex items-center justify-center text-slate-300 shrink-0`}>
+      <Package size={20} />
+    </div>
+  );
+
+  const ImagePicker = ({ value, onChange, label = 'Photo' }) => {
+    const inputRef = useRef(null);
+    const handleFile = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        onChange(await resizeImage(file));
+      } catch (err) {
+        alert("Impossible de lire cette image.");
       }
-      
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
-        amount: total,
-        type: 'ENTREE',
-        label: `Vente #${docRef.id.slice(-5)}`,
-        date: new Date().toISOString(),
-        userId: user.uid
-      });
-
-      setInvoice({ ...saleData, id: docRef.id });
-      setCart([]);
-    } catch (err) {
-      console.error("Erreur traitement vente:", err);
-    }
-  };
-
-  const handleAddProduct = async (e) => {
-    e.preventDefault();
-    if (!user) return;
-    const fd = new FormData(e.target);
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), {
-        name: fd.get('name'),
-        price: Number(fd.get('price')),
-        stock: Number(fd.get('stock')),
-        unit: fd.get('unit'),
-        createdAt: new Date().toISOString()
-      });
-      setModal({ open: false });
-    } catch (err) {
-      console.error("Erreur ajout produit:", err);
-    }
-  };
-
-  const totalCaisse = useMemo(() => {
-    return transactions.reduce((acc, t) => acc + (t.type === 'ENTREE' ? t.amount : -t.amount), 0);
-  }, [transactions]);
-
-  if (loading) {
+    };
     return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#003366] text-white">
-        <GMTLogo className="w-24 h-24 mb-6 animate-pulse" />
-        <p className="font-bold tracking-widest animate-bounce uppercase">Initialisation Guimetra Cloud...</p>
+      <Field label={label}>
+        <div className="flex items-center gap-4">
+          {value
+            ? <img src={value} alt="" className="w-20 h-20 rounded-2xl object-cover bg-slate-100" />
+            : <div className="w-20 h-20 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-300"><ImagePlus /></div>}
+          <div className="flex flex-col gap-2">
+            <button type="button" onClick={() => inputRef.current.click()} className="text-sm font-bold text-[#0099cc] hover:underline text-left">
+              {value ? 'Changer la photo' : 'Ajouter une photo'}
+            </button>
+            {value && <button type="button" onClick={() => onChange('')} className="text-sm font-bold text-red-500 hover:underline text-left">Retirer</button>}
+          </div>
+          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        </div>
+      </Field>
+    );
+  };
+
+  // =========================================================================
+  //  FORMULAIRES
+  // =========================================================================
+  const ProductForm = ({ initial, onSave, onClose }) => {
+    const [form, setForm] = useState(initial || { name: '', category: CATEGORIES[0], unit: 'Sac', price: '', cost: '', stock: '', minStock: 10, image: '' });
+    const set = (k) => (e) => setForm({ ...form, [k]: e.target ? e.target.value : e });
+    const submit = (e) => {
+      e.preventDefault();
+      onSave({
+        ...form,
+        price: Number(form.price) || 0,
+        cost: Number(form.cost) || 0,
+        stock: Number(form.stock) || 0,
+        minStock: Number(form.minStock) || 0,
+      });
+    };
+    return (
+      <Modal title={initial ? "Modifier l'article" : 'Nouveau matériau'} onClose={onClose}>
+        <form onSubmit={submit} className="space-y-4">
+          <ImagePicker value={form.image} onChange={set('image')} />
+          <Field label="Désignation"><input required value={form.name} onChange={set('name')} className={inputCls} placeholder="ex : Ciment 42.5N" /></Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Catégorie">
+              <select value={form.category} onChange={set('category')} className={inputCls}>
+                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="Unité"><input value={form.unit} onChange={set('unit')} className={inputCls} placeholder="Sac, Tonne…" /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Prix de vente (GNF)"><input required type="number" min="0" value={form.price} onChange={set('price')} className={inputCls} /></Field>
+            <Field label="Prix d'achat (GNF)"><input type="number" min="0" value={form.cost} onChange={set('cost')} className={inputCls} placeholder="optionnel" /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label={initial ? 'Stock actuel' : 'Stock initial'}><input required type="number" min="0" value={form.stock} onChange={set('stock')} className={inputCls} /></Field>
+            <Field label="Seuil d'alerte"><input type="number" min="0" value={form.minStock} onChange={set('minStock')} className={inputCls} /></Field>
+          </div>
+          <button type="submit" className="w-full bg-[#003366] text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 hover:bg-[#002244]">
+            <Save size={20} /> Enregistrer
+          </button>
+        </form>
+      </Modal>
+    );
+  };
+
+  const RestockForm = ({ product, onSave, onClose }) => {
+    const [qty, setQty] = useState('');
+    const [unitCost, setUnitCost] = useState(product.cost || '');
+    const [recordExpense, setRecordExpense] = useState(true);
+    const total = (Number(qty) || 0) * (Number(unitCost) || 0);
+    return (
+      <Modal title="Réapprovisionner" onClose={onClose}>
+        <div className="flex items-center gap-3 mb-6 p-4 bg-slate-50 rounded-2xl">
+          <ProductThumb product={product} />
+          <div>
+            <p className="font-bold">{product.name}</p>
+            <p className="text-xs text-slate-400">Stock actuel : {product.stock} {product.unit}</p>
+          </div>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(Number(qty), Number(unitCost) || 0, recordExpense); }} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Quantité reçue"><input required autoFocus type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} className={inputCls} /></Field>
+            <Field label="Coût unitaire"><input type="number" min="0" value={unitCost} onChange={e => setUnitCost(e.target.value)} className={inputCls} /></Field>
+          </div>
+          <label className="flex items-center gap-3 text-sm font-bold text-slate-600">
+            <input type="checkbox" checked={recordExpense} onChange={e => setRecordExpense(e.target.checked)} className="w-5 h-5 accent-[#003366]" />
+            Enregistrer la dépense dans la caisse ({formatGNF(total)})
+          </label>
+          <button type="submit" className="w-full bg-[#003366] text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3">
+            <PackagePlus size={20} /> Ajouter au stock
+          </button>
+        </form>
+      </Modal>
+    );
+  };
+
+  const TransactionForm = ({ onSave, onClose }) => {
+    const [form, setForm] = useState({ type: 'SORTIE', amount: '', label: '', category: EXPENSE_CATEGORIES[0] });
+    const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+    return (
+      <Modal title="Nouvelle opération de caisse" onClose={onClose}>
+        <form onSubmit={(e) => { e.preventDefault(); onSave({ ...form, amount: Number(form.amount) }); }} className="space-y-4">
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+            {[['SORTIE', 'Dépense'], ['ENTREE', 'Entrée']].map(([v, l]) => (
+              <button key={v} type="button" onClick={() => setForm({ ...form, type: v })}
+                className={`py-3 rounded-xl font-black text-sm ${form.type === v ? (v === 'SORTIE' ? 'bg-red-500 text-white' : 'bg-green-500 text-white') : 'text-slate-500'}`}>{l}</button>
+            ))}
+          </div>
+          <Field label="Montant (GNF)"><input required autoFocus type="number" min="1" value={form.amount} onChange={set('amount')} className={inputCls} /></Field>
+          <Field label="Libellé"><input required value={form.label} onChange={set('label')} className={inputCls} placeholder="ex : Gasoil camion benne" /></Field>
+          {form.type === 'SORTIE' && (
+            <Field label="Catégorie">
+              <select value={form.category} onChange={set('category')} className={inputCls}>
+                {EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </Field>
+          )}
+          <button type="submit" className="w-full bg-[#003366] text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3">
+            <Save size={20} /> Enregistrer
+          </button>
+        </form>
+      </Modal>
+    );
+  };
+
+  const VehicleForm = ({ initial, onSave, onClose }) => {
+    const [form, setForm] = useState(initial || { name: '', type: 'Camion benne', plate: '', driver: '', status: 'Disponible', notes: '', image: '' });
+    const set = (k) => (e) => setForm({ ...form, [k]: e.target ? e.target.value : e });
+    return (
+      <Modal title={initial ? "Modifier l'engin" : 'Nouvel engin'} onClose={onClose}>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(form); }} className="space-y-4">
+          <ImagePicker value={form.image} onChange={set('image')} />
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Nom / Modèle"><input required value={form.name} onChange={set('name')} className={inputCls} placeholder="ex : Sinotruk Howo" /></Field>
+            <Field label="Type"><input value={form.type} onChange={set('type')} className={inputCls} placeholder="Camion, Pelle…" /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Immatriculation"><input value={form.plate} onChange={set('plate')} className={inputCls} placeholder="RC-1234-A" /></Field>
+            <Field label="Chauffeur"><input value={form.driver} onChange={set('driver')} className={inputCls} /></Field>
+          </div>
+          <Field label="Statut">
+            <select value={form.status} onChange={set('status')} className={inputCls}>
+              {Object.keys(FLEET_STATUS).map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Notes"><textarea rows="2" value={form.notes} onChange={set('notes')} className={inputCls} placeholder="Prochaine vidange, chantier en cours…" /></Field>
+          <button type="submit" className="w-full bg-[#003366] text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3">
+            <Save size={20} /> Enregistrer
+          </button>
+        </form>
+      </Modal>
+    );
+  };
+
+  // =========================================================================
+  //  REÇU
+  // =========================================================================
+  const InvoiceView = ({ invoice, company, onClose }) => {
+    const subtotal = invoice.items.reduce((a, i) => a + i.price * i.qty, 0);
+    return (
+      <div className="fixed inset-0 bg-slate-100 z-[100] p-4 sm:p-10 flex flex-col items-center overflow-y-auto">
+        <div className="no-print w-full max-w-2xl flex justify-end gap-3 mb-4">
+          <button onClick={() => window.print()} className="bg-[#003366] text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2"><Printer size={18} /> Imprimer</button>
+          <button onClick={onClose} className="bg-white text-slate-700 px-6 py-3 rounded-2xl font-black flex items-center gap-2 border"><X size={18} /> Fermer</button>
+        </div>
+        <div id="print-area" className="w-full max-w-2xl bg-white border p-6 sm:p-12 rounded-lg">
+          <div className="flex flex-col sm:flex-row justify-between items-start gap-6 border-b-4 border-[#003366] pb-8 mb-8">
+            <div className="flex gap-4 items-center">
+              <GMTLogo className="w-20 h-20" customLogo={company.logo} />
+              <div>
+                <h1 className="text-2xl font-black text-[#003366]">{company.name}</h1>
+                <p className="text-xs font-black uppercase text-slate-500 tracking-widest">{company.subtitle}</p>
+                <p className="text-[10px] font-bold">{company.address}</p>
+                {company.phone && <p className="text-[10px] font-bold">Tél : {company.phone}</p>}
+              </div>
+            </div>
+            <div className="sm:text-right">
+              <p className="text-2xl font-black text-[#003366]">REÇU DE VENTE</p>
+              <p className="text-sm font-bold">N° {invoice.number}</p>
+              <p className="text-[10px] text-slate-400 mt-1">{formatDateTime(invoice.date)}</p>
+            </div>
+          </div>
+
+          <div className="mb-8 flex justify-between items-end gap-4">
+            <div>
+              <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Facturé à</p>
+              <p className="text-xl font-black text-[#003366]">{invoice.client}</p>
+              {invoice.clientPhone && <p className="text-xs text-slate-500">{invoice.clientPhone}</p>}
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Paiement</p>
+              <p className={`text-sm font-black uppercase tracking-widest ${invoice.paymentMethod === 'Crédit client' ? 'text-orange-600' : 'text-green-600'}`}>
+                {invoice.paymentMethod === 'Crédit client' ? 'À crédit' : 'Payé'} · {invoice.paymentMethod}
+              </p>
+            </div>
+          </div>
+
+          <table className="w-full mb-8 text-left">
+            <thead>
+              <tr className="border-b-2 border-slate-900 text-[10px] uppercase font-black tracking-widest">
+                <th className="py-3">Désignation</th>
+                <th className="py-3 text-center">Qté</th>
+                <th className="py-3 text-right">P.U</th>
+                <th className="py-3 text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoice.items.map((it, idx) => (
+                <tr key={idx} className="border-b border-slate-100 text-sm">
+                  <td className="py-3 font-black text-slate-700">{it.name} <span className="text-[10px] text-slate-400 font-bold">/ {it.unit}</span></td>
+                  <td className="py-3 text-center font-bold">{it.qty}</td>
+                  <td className="py-3 text-right">{formatGNF(it.price)}</td>
+                  <td className="py-3 text-right font-black">{formatGNF(it.price * it.qty)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="border-t-4 border-[#003366] pt-6 bg-slate-50 p-6 rounded-b-2xl">
+            {invoice.discount > 0 && (
+              <div className="flex justify-between text-sm mb-1"><span>Sous-total</span><span className="font-bold">{formatGNF(subtotal)}</span></div>
+            )}
+            {invoice.discount > 0 && (
+              <div className="flex justify-between text-sm mb-3 text-red-600"><span>Remise</span><span className="font-bold">− {formatGNF(invoice.discount)}</span></div>
+            )}
+            <div className="flex justify-between items-end gap-4">
+              <div className="text-[9px] italic text-slate-500 font-bold max-w-[50%]">
+                * Les marchandises vendues et livrées ne sont ni reprises ni échangées.<br />
+                Merci de votre confiance en {company.name}.
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Net à payer</p>
+                <p className="text-3xl sm:text-4xl font-black text-[#003366]">{formatGNF(invoice.total)}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-20 flex justify-between px-4 sm:px-10">
+            <div className="text-center w-36"><p className="text-[10px] uppercase font-black text-slate-400 mb-14">Signature client</p><div className="border-b border-slate-300"></div></div>
+            <div className="text-center w-36"><p className="text-[10px] uppercase font-black text-slate-400 mb-14">Cachet {company.name}</p><div className="border-b border-slate-300"></div></div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // =========================================================================
+  //  APPLICATION
+  // =========================================================================
+  const DEFAULT_COMPANY = {
+    name: 'GUIMETRA',
+    subtitle: 'Construction SARL',
+    address: 'Conakry, République de Guinée',
+    phone: '',
+    logo: '',
+  };
+
+  const NAV = [
+    { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
+    { id: 'pos', label: 'Caisse & Vente', icon: ShoppingCart },
+    { id: 'inventory', label: 'Stocks Matériaux', icon: Package },
+    { id: 'sales', label: 'Historique Ventes', icon: Receipt },
+    { id: 'finance', label: 'Journal Caisse', icon: Wallet },
+    { id: 'fleet', label: 'Parc Engins', icon: Truck },
+    { id: 'settings', label: 'Paramètres', icon: Settings },
+  ];
+
+  function App() {
+    const [products, setProducts] = useStoredState('products', []);
+    const [sales, setSales] = useStoredState('sales', []);
+    const [transactions, setTransactions] = useStoredState('transactions', []);
+    const [fleet, setFleet] = useStoredState('fleet', []);
+    const [company, setCompany] = useStoredState('company', DEFAULT_COMPANY);
+
+    const [activeTab, setActiveTab] = useState('dashboard');
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [modal, setModal] = useState(null); // { type, data }
+    const [cart, setCart] = useState([]);
+    const [client, setClient] = useState({ name: '', phone: '' });
+    const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
+    const [discount, setDiscount] = useState('');
+    const [invoice, setInvoice] = useState(null);
+    const [productSearch, setProductSearch] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState('Toutes');
+    const [salesSearch, setSalesSearch] = useState('');
+    const [toast, setToast] = useState('');
+
+    const toastTimer = useRef(null);
+    const notify = (msg) => {
+      setToast(msg);
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(''), 2500);
+    };
+    const closeModal = () => setModal(null);
+    const goTo = (tab) => { setActiveTab(tab); setMenuOpen(false); };
+
+    // ---------- Calculs ----------
+    const totalCaisse = useMemo(() => transactions.reduce((acc, t) => acc + (t.type === 'ENTREE' ? t.amount : -t.amount), 0), [transactions]);
+    const lowStock = useMemo(() => products.filter(p => Number(p.stock) <= Number(p.minStock ?? 5)), [products]);
+    const stockValue = useMemo(() => products.reduce((a, p) => a + (p.cost || p.price) * p.stock, 0), [products]);
+    const todayKey = new Date().toDateString();
+    const todaySales = useMemo(() => sales.filter(s => new Date(s.date).toDateString() === todayKey), [sales, todayKey]);
+    const creditTotal = useMemo(() => sales.filter(s => s.paymentMethod === 'Crédit client' && !s.paid).reduce((a, s) => a + s.total, 0), [sales]);
+
+    const last7Days = useMemo(() => {
+      const days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+        const total = sales.filter(s => new Date(s.date).toDateString() === d.toDateString()).reduce((a, s) => a + s.total, 0);
+        days.push({ label: d.toLocaleDateString('fr-FR', { weekday: 'short' }), total });
+      }
+      return days;
+    }, [sales]);
+    const maxDay = Math.max(1, ...last7Days.map(d => d.total));
+
+    const topProducts = useMemo(() => {
+      const map = {};
+      sales.forEach(s => s.items.forEach(i => {
+        map[i.name] = map[i.name] || { name: i.name, qty: 0, total: 0 };
+        map[i.name].qty += i.qty;
+        map[i.name].total += i.qty * i.price;
+      }));
+      return Object.values(map).sort((a, b) => b.total - a.total).slice(0, 5);
+    }, [sales]);
+
+    const filteredProducts = useMemo(() => {
+      const q = productSearch.trim().toLowerCase();
+      return products.filter(p =>
+        (categoryFilter === 'Toutes' || p.category === categoryFilter) &&
+        (!q || p.name.toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q))
+      );
+    }, [products, productSearch, categoryFilter]);
+
+    // ---------- Produits ----------
+    const saveProduct = (data) => {
+      if (data.id) {
+        setProducts(products.map(p => p.id === data.id ? data : p));
+        notify('Article modifié');
+      } else {
+        setProducts([...products, { ...data, id: newId(), createdAt: new Date().toISOString() }]);
+        notify('Article ajouté');
+      }
+      closeModal();
+    };
+
+    const deleteProduct = (p) => {
+      if (!confirm(`Supprimer « ${p.name} » ?`)) return;
+      setProducts(products.filter(x => x.id !== p.id));
+      setCart(cart.filter(i => i.id !== p.id));
+    };
+
+    const restock = (product, qty, unitCost, recordExpense) => {
+      setProducts(products.map(p => p.id === product.id ? { ...p, stock: Number(p.stock) + qty, cost: unitCost || p.cost } : p));
+      if (recordExpense && qty * unitCost > 0) {
+        setTransactions([...transactions, {
+          id: newId(), type: 'SORTIE', amount: qty * unitCost, category: 'Achat marchandises',
+          label: `Achat ${qty} ${product.unit} ${product.name}`, date: new Date().toISOString(),
+        }]);
+      }
+      notify('Stock mis à jour');
+      closeModal();
+    };
+
+    const loadSamples = () => {
+      setProducts(SAMPLE_PRODUCTS.map(p => ({ ...p, id: newId(), image: '', createdAt: new Date().toISOString() })));
+      notify('Articles d\'exemple chargés');
+    };
+
+    // ---------- Panier ----------
+    const cartQty = (id) => (cart.find(i => i.id === id) || {}).qty || 0;
+
+    const addToCart = (product) => {
+      if (cartQty(product.id) >= product.stock) { notify('Stock insuffisant'); return; }
+      const exists = cart.find(i => i.id === product.id);
+      if (exists) setCart(cart.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i));
+      else setCart([...cart, { id: product.id, name: product.name, unit: product.unit, price: product.price, qty: 1 }]);
+    };
+
+    const setCartQty = (id, qty) => {
+      const product = products.find(p => p.id === id);
+      const max = product ? Number(product.stock) : 0;
+      const value = Math.max(0, Math.min(max, Number(qty) || 0));
+      if (value === 0) setCart(cart.filter(i => i.id !== id));
+      else setCart(cart.map(i => i.id === id ? { ...i, qty: value } : i));
+    };
+
+    const cartSubtotal = cart.reduce((acc, i) => acc + i.price * i.qty, 0);
+    const discountValue = Math.min(cartSubtotal, Math.max(0, Number(discount) || 0));
+    const cartTotal = cartSubtotal - discountValue;
+
+    const processSale = () => {
+      if (cart.length === 0) return;
+      if (paymentMethod === 'Crédit client' && !client.name.trim()) { notify('Nom du client obligatoire pour une vente à crédit'); return; }
+      const now = new Date().toISOString();
+      const number = 'V' + String(sales.length + 1).padStart(5, '0');
+      const sale = {
+        id: newId(), number,
+        client: client.name.trim() || 'Client comptant',
+        clientPhone: client.phone.trim(),
+        items: cart,
+        discount: discountValue,
+        total: cartTotal,
+        paymentMethod,
+        paid: paymentMethod !== 'Crédit client',
+        date: now,
+      };
+      setSales([...sales, sale]);
+      setProducts(products.map(p => {
+        const item = cart.find(i => i.id === p.id);
+        return item ? { ...p, stock: Number(p.stock) - item.qty } : p;
+      }));
+      if (sale.paid) {
+        setTransactions([...transactions, { id: newId(), amount: cartTotal, type: 'ENTREE', label: `Vente ${number} (${paymentMethod})`, date: now }]);
+      }
+      setInvoice(sale);
+      setCart([]);
+      setClient({ name: '', phone: '' });
+      setDiscount('');
+      setPaymentMethod(PAYMENT_METHODS[0]);
+    };
+
+    const markCreditPaid = (sale) => {
+      if (!confirm(`Confirmer le paiement de ${formatGNF(sale.total)} par ${sale.client} ?`)) return;
+      setSales(sales.map(s => s.id === sale.id ? { ...s, paid: true, paidAt: new Date().toISOString() } : s));
+      setTransactions([...transactions, { id: newId(), amount: sale.total, type: 'ENTREE', label: `Règlement crédit ${sale.number} – ${sale.client}`, date: new Date().toISOString() }]);
+      notify('Paiement enregistré');
+    };
+
+    // ---------- Caisse ----------
+    const saveTransaction = (data) => {
+      setTransactions([...transactions, { ...data, id: newId(), date: new Date().toISOString() }]);
+      notify('Opération enregistrée');
+      closeModal();
+    };
+
+    // ---------- Engins ----------
+    const saveVehicle = (data) => {
+      if (data.id) setFleet(fleet.map(v => v.id === data.id ? data : v));
+      else setFleet([...fleet, { ...data, id: newId() }]);
+      notify('Engin enregistré');
+      closeModal();
+    };
+
+    // ---------- Sauvegarde ----------
+    const exportData = () => {
+      const blob = new Blob([JSON.stringify({ products, sales, transactions, fleet, company, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `guimetra-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+
+    const importData = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          if (!confirm('Remplacer toutes les données actuelles par cette sauvegarde ?')) return;
+          setProducts(data.products || []);
+          setSales(data.sales || []);
+          setTransactions(data.transactions || []);
+          setFleet(data.fleet || []);
+          if (data.company) setCompany(data.company);
+          notify('Sauvegarde restaurée');
+        } catch (err) {
+          alert('Fichier de sauvegarde invalide.');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    };
+
+    const currentNav = NAV.find(n => n.id === activeTab);
+
+    // =======================================================================
+    //  RENDU
+    // =======================================================================
+    return (
+      <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
+        {/* Sidebar */}
+        {menuOpen && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={() => setMenuOpen(false)} />}
+        <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-72 bg-[#003366] text-white flex flex-col p-6 shrink-0 transition-transform ${menuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+          <div className="mb-10 text-center">
+            <GMTLogo className="w-20 h-20 mx-auto mb-4 bg-white p-1 rounded-full shadow-lg" customLogo={company.logo} />
+            <h1 className="font-black text-xl tracking-tighter">{company.name}</h1>
+            <p className="text-[9px] font-bold text-blue-300 uppercase tracking-[0.3em]">{company.subtitle}</p>
+          </div>
+          <nav className="flex-1 space-y-1.5 overflow-y-auto">
+            {NAV.map(item => (
+              <button key={item.id} onClick={() => goTo(item.id)}
+                className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all ${activeTab === item.id ? 'bg-[#0099cc] shadow-lg text-white' : 'hover:bg-white/10 text-slate-300'}`}>
+                <item.icon size={20} />
+                <span className="font-bold text-sm flex-1 text-left">{item.label}</span>
+                {item.id === 'inventory' && lowStock.length > 0 && (
+                  <span className="bg-orange-500 text-white text-[10px] font-black rounded-full px-2 py-0.5">{lowStock.length}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Main */}
+        <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <header className="h-16 sm:h-20 bg-white border-b flex items-center justify-between px-4 sm:px-10 shrink-0 gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <button className="lg:hidden p-2 -ml-2 text-[#003366]" onClick={() => setMenuOpen(true)} aria-label="Menu"><Menu /></button>
+              <h2 className="text-xs sm:text-sm font-black uppercase tracking-widest text-slate-400 truncate">{currentNav ? currentNav.label : ''}</h2>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-[10px] font-black text-slate-400 uppercase">Solde caisse</p>
+                <p className={`text-base sm:text-lg font-black ${totalCaisse < 0 ? 'text-red-600' : 'text-[#003366]'}`}>{formatGNF(totalCaisse)}</p>
+              </div>
+              <div className="hidden sm:flex h-10 w-10 bg-[#0099cc] rounded-full border-2 border-white shadow-sm items-center justify-center text-white font-bold">MA</div>
+            </div>
+          </header>
+
+          <div className="flex-1 overflow-y-auto p-4 sm:p-8 lg:p-10">
+
+            {/* ================= TABLEAU DE BORD ================= */}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <StatCard title="Ventes du jour" value={formatGNF(todaySales.reduce((a, s) => a + s.total, 0))} hint={`${todaySales.length} vente(s)`} icon={TrendingUp} color="green" />
+                  <StatCard title="Valeur du stock" value={formatGNF(stockValue)} hint={`${products.length} article(s)`} icon={Package} color="blue" />
+                  <StatCard title="Alertes stock" value={lowStock.length} hint="sous le seuil" icon={AlertTriangle} color="orange" />
+                  <StatCard title="Crédits clients" value={formatGNF(creditTotal)} hint="à encaisser" icon={Wallet} color="purple" />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 bg-white p-6 sm:p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <h3 className="font-black text-xs uppercase text-slate-400 mb-6 flex items-center gap-2"><TrendingUp size={16} /> Ventes des 7 derniers jours</h3>
+                    <div className="flex items-end gap-2 sm:gap-4 h-48">
+                      {last7Days.map((d, i) => (
+                        <div key={i} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                          <span className="text-[9px] font-bold text-slate-400 opacity-0 group-hover:opacity-100 whitespace-nowrap">{new Intl.NumberFormat('fr-FR', { notation: 'compact' }).format(d.total)}</span>
+                          <div className={`w-full rounded-t-xl ${i === 6 ? 'bg-[#0099cc]' : 'bg-[#003366]/80'}`} style={{ height: `${Math.max(2, (d.total / maxDay) * 100)}%` }} />
+                          <span className="text-[10px] font-black uppercase text-slate-400">{d.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-[#003366] p-8 rounded-[2rem] text-white flex flex-col justify-between min-h-[250px]">
+                    <div>
+                      <h3 className="text-2xl font-black mb-2">{company.name} ERP</h3>
+                      <p className="text-blue-200 text-sm">Vos données sont enregistrées sur cet appareil. Pensez à exporter une sauvegarde régulièrement.</p>
+                    </div>
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <button onClick={() => goTo('pos')} className="bg-[#0099cc] px-5 py-3 rounded-xl font-bold flex items-center gap-2 hover:scale-105 transition-transform"><Plus size={18} /> Nouvelle vente</button>
+                      <button onClick={() => setModal({ type: 'transaction' })} className="bg-white/10 px-5 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-white/20"><TrendingDown size={18} /> Dépense</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="bg-white p-6 sm:p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <h3 className="font-black text-xs uppercase text-slate-400 mb-5 flex items-center gap-2"><History size={16} /> Dernières ventes</h3>
+                    <div className="space-y-3">
+                      {sales.length === 0 ? <p className="text-sm text-slate-400 italic">Aucune vente enregistrée</p> :
+                        [...sales].reverse().slice(0, 5).map(s => (
+                          <button key={s.id} onClick={() => setInvoice(s)} className="w-full flex justify-between items-center p-3 bg-slate-50 rounded-2xl hover:bg-slate-100 text-left">
+                            <div className="min-w-0"><p className="font-bold text-sm truncate">{s.client}</p><p className="text-[10px] text-slate-400">{formatDate(s.date)} · {s.number}</p></div>
+                            <span className="font-black text-sm text-[#003366] whitespace-nowrap">{formatGNF(s.total)}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                  <div className="bg-white p-6 sm:p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <h3 className="font-black text-xs uppercase text-slate-400 mb-5 flex items-center gap-2"><CheckCircle2 size={16} /> Meilleures ventes</h3>
+                    <div className="space-y-3">
+                      {topProducts.length === 0 ? <p className="text-sm text-slate-400 italic">Pas encore de données</p> :
+                        topProducts.map((p, i) => (
+                          <div key={p.name} className="flex items-center gap-3">
+                            <span className="w-6 h-6 rounded-full bg-[#003366] text-white text-[10px] font-black flex items-center justify-center shrink-0">{i + 1}</span>
+                            <div className="flex-1 min-w-0"><p className="font-bold text-sm truncate">{p.name}</p><p className="text-[10px] text-slate-400">{p.qty} vendu(s)</p></div>
+                            <span className="font-black text-sm text-[#0099cc] whitespace-nowrap">{formatGNF(p.total)}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                  <div className="bg-white p-6 sm:p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <h3 className="font-black text-xs uppercase text-slate-400 mb-5 flex items-center gap-2"><AlertTriangle size={16} /> À réapprovisionner</h3>
+                    <div className="space-y-3">
+                      {lowStock.length === 0 ? <p className="text-sm text-slate-400 italic">Tous les stocks sont bons</p> :
+                        lowStock.slice(0, 5).map(p => (
+                          <div key={p.id} className="flex items-center gap-3">
+                            <ProductThumb product={p} size="w-10 h-10" />
+                            <div className="flex-1 min-w-0"><p className="font-bold text-sm truncate">{p.name}</p><p className="text-[10px] text-red-500 font-bold">{p.stock} {p.unit} restant(s)</p></div>
+                            <button onClick={() => setModal({ type: 'restock', data: p })} className="text-[#0099cc] hover:bg-blue-50 p-2 rounded-xl" title="Réapprovisionner"><PackagePlus size={18} /></button>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STOCKS ================= */}
+            {activeTab === 'inventory' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap justify-between items-center gap-4">
+                  <h3 className="text-2xl font-black text-[#003366]">Inventaire des matériaux</h3>
+                  <button onClick={() => setModal({ type: 'product' })} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2"><Plus size={20} /> Ajouter un article</button>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <SearchBox value={productSearch} onChange={setProductSearch} placeholder="Rechercher un article…" />
+                  <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="px-4 py-3 bg-white rounded-2xl border border-slate-200 font-bold text-sm">
+                    <option>Toutes</option>
+                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                {products.length === 0 ? (
+                  <EmptyState icon={Package} text="Aucun article en stock pour le moment."
+                    action={<div className="flex flex-wrap gap-3 justify-center">
+                      <button onClick={() => setModal({ type: 'product' })} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold">Ajouter un article</button>
+                      <button onClick={loadSamples} className="bg-slate-100 text-slate-700 px-5 py-3 rounded-2xl font-bold">Charger des exemples</button>
+                    </div>} />
+                ) : (
+                  <div className="bg-white rounded-[2rem] border shadow-sm overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[720px]">
+                      <thead className="bg-slate-50 border-b">
+                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          <th className="p-5">Désignation</th>
+                          <th className="p-5">Prix de vente</th>
+                          <th className="p-5">Marge</th>
+                          <th className="p-5">Stock</th>
+                          <th className="p-5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredProducts.length === 0 && <tr><td colSpan="5" className="p-10 text-center text-slate-400 italic">Aucun résultat</td></tr>}
+                        {filteredProducts.map(p => {
+                          const low = Number(p.stock) <= Number(p.minStock ?? 5);
+                          const margin = p.cost ? Math.round(((p.price - p.cost) / p.price) * 100) : null;
+                          return (
+                            <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50">
+                              <td className="p-5">
+                                <div className="flex items-center gap-3">
+                                  <ProductThumb product={p} />
+                                  <div>
+                                    <p className="font-bold text-slate-700">{p.name}</p>
+                                    <p className="text-[10px] text-slate-400 uppercase font-black tracking-tight">{p.category} · {p.unit || 'Unité'}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-5 font-black text-[#0099cc] whitespace-nowrap">{formatGNF(p.price)}</td>
+                              <td className="p-5 text-sm font-bold text-slate-500">{margin === null ? '—' : `${margin} %`}</td>
+                              <td className="p-5">
+                                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${low ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{p.stock} {p.unit}</span>
+                              </td>
+                              <td className="p-5">
+                                <div className="flex justify-end gap-1">
+                                  <button onClick={() => setModal({ type: 'restock', data: p })} className="p-2 rounded-xl text-slate-400 hover:text-[#0099cc] hover:bg-blue-50" title="Réapprovisionner"><PackagePlus size={18} /></button>
+                                  <button onClick={() => setModal({ type: 'product', data: p })} className="p-2 rounded-xl text-slate-400 hover:text-[#003366] hover:bg-slate-100" title="Modifier"><Pencil size={18} /></button>
+                                  <button onClick={() => deleteProduct(p)} className="p-2 rounded-xl text-slate-300 hover:text-red-500 hover:bg-red-50" title="Supprimer"><Trash2 size={18} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= CAISSE ================= */}
+            {activeTab === 'pos' && (
+              <div className="flex flex-col xl:flex-row gap-6 xl:h-full">
+                <div className="flex-1 flex flex-col gap-4 xl:overflow-hidden min-w-0">
+                  <div className="flex flex-wrap gap-3">
+                    <SearchBox value={productSearch} onChange={setProductSearch} placeholder="Rechercher un article…" />
+                    <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="px-4 py-3 bg-white rounded-2xl border border-slate-200 font-bold text-sm">
+                      <option>Toutes</option>
+                      {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  {products.length === 0 ? (
+                    <EmptyState icon={Package} text="Ajoutez d'abord des articles dans le stock."
+                      action={<button onClick={() => goTo('inventory')} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold">Aller au stock</button>} />
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-4 gap-3 xl:overflow-y-auto xl:pr-2 content-start">
+                      {filteredProducts.map(p => {
+                        const inCart = cartQty(p.id);
+                        const available = p.stock - inCart;
+                        return (
+                          <button key={p.id} onClick={() => addToCart(p)} disabled={available <= 0}
+                            className={`relative bg-white rounded-3xl border shadow-sm text-left hover:border-[#0099cc] hover:shadow-md transition-all overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed ${inCart ? 'border-[#0099cc] ring-2 ring-[#0099cc]/20' : 'border-slate-100'}`}>
+                            {p.image
+                              ? <img src={p.image} alt="" className="w-full h-28 object-cover bg-slate-100" />
+                              : <div className="w-full h-20 bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center text-slate-300"><Package size={28} /></div>}
+                            {inCart > 0 && <span className="absolute top-2 right-2 bg-[#0099cc] text-white text-xs font-black rounded-full w-7 h-7 flex items-center justify-center shadow">{inCart}</span>}
+                            <div className="p-4">
+                              <p className="font-black text-slate-800 text-sm leading-tight mb-1">{p.name}</p>
+                              <p className="text-lg font-black text-[#003366]">{formatGNF(p.price)}</p>
+                              <p className={`text-[10px] mt-1 uppercase font-bold tracking-widest ${available <= (p.minStock ?? 5) ? 'text-red-500' : 'text-slate-400'}`}>
+                                {available > 0 ? `Dispo : ${available} ${p.unit}` : 'Rupture'}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-full xl:w-[400px] bg-[#003366] rounded-[2rem] p-6 sm:p-8 text-white flex flex-col shadow-xl shrink-0 xl:overflow-y-auto">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3"><ShoppingCart className="text-[#0099cc]" /><h3 className="text-xl font-black">Panier</h3></div>
+                    {cart.length > 0 && <button onClick={() => setCart([])} className="text-xs font-bold text-blue-300 hover:text-white">Vider</button>}
+                  </div>
+
+                  <div className="flex-1 space-y-2 min-h-[120px]">
+                    {cart.length === 0 && <p className="text-blue-300/60 text-sm italic text-center py-8">Touchez un article pour l'ajouter</p>}
+                    {cart.map(item => (
+                      <div key={item.id} className="bg-white/5 p-3 rounded-2xl border border-white/5">
+                        <div className="flex justify-between items-start gap-2 mb-2">
+                          <p className="font-bold text-sm">{item.name}</p>
+                          <button onClick={() => setCartQty(item.id, 0)} className="text-red-400 hover:bg-red-500/20 p-1 rounded-lg" aria-label="Retirer"><X size={14} /></button>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-1 bg-white/10 rounded-xl">
+                            <button onClick={() => setCartQty(item.id, item.qty - 1)} className="p-2 hover:bg-white/10 rounded-xl" aria-label="Moins"><Minus size={14} /></button>
+                            <input type="number" value={item.qty} onChange={e => setCartQty(item.id, e.target.value)} className="w-12 bg-transparent text-center font-black outline-none [appearance:textfield]" />
+                            <button onClick={() => setCartQty(item.id, item.qty + 1)} className="p-2 hover:bg-white/10 rounded-xl" aria-label="Plus"><Plus size={14} /></button>
+                          </div>
+                          <span className="font-black text-sm">{formatGNF(item.price * item.qty)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-6 pt-6 border-t border-white/10 space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input value={client.name} onChange={e => setClient({ ...client, name: e.target.value })} placeholder="Nom du client"
+                        className="w-full bg-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/40 focus:ring-2 focus:ring-[#0099cc] outline-none" />
+                      <input value={client.phone} onChange={e => setClient({ ...client, phone: e.target.value })} placeholder="Téléphone"
+                        className="w-full bg-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/40 focus:ring-2 focus:ring-[#0099cc] outline-none" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="w-full bg-white/10 rounded-xl p-3 text-sm text-white outline-none focus:ring-2 focus:ring-[#0099cc]">
+                        {PAYMENT_METHODS.map(m => <option key={m} className="text-slate-900">{m}</option>)}
+                      </select>
+                      <input type="number" min="0" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="Remise (GNF)"
+                        className="w-full bg-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/40 focus:ring-2 focus:ring-[#0099cc] outline-none" />
+                    </div>
+                    {discountValue > 0 && (
+                      <div className="flex justify-between text-xs text-blue-200"><span>Sous-total {formatGNF(cartSubtotal)}</span><span>− {formatGNF(discountValue)}</span></div>
+                    )}
+                    <div className="flex justify-between items-end pt-2">
+                      <span className="text-blue-300 text-[10px] font-black uppercase tracking-[0.2em]">Total</span>
+                      <span className="text-3xl font-black text-[#0099cc]">{formatGNF(cartTotal)}</span>
+                    </div>
+                    <button onClick={processSale} disabled={cart.length === 0}
+                      className="w-full bg-[#0099cc] py-4 rounded-2xl font-black text-lg shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed">
+                      Valider la vente
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= HISTORIQUE VENTES ================= */}
+            {activeTab === 'sales' && (
+              <div className="space-y-6">
+                <h3 className="text-2xl font-black text-[#003366]">Historique des ventes</h3>
+                <SearchBox value={salesSearch} onChange={setSalesSearch} placeholder="Client, n° de vente…" />
+                {sales.length === 0 ? <EmptyState icon={Receipt} text="Aucune vente pour le moment." /> : (
+                  <div className="bg-white rounded-[2rem] border shadow-sm overflow-x-auto">
+                    <table className="w-full text-left min-w-[680px]">
+                      <thead className="bg-slate-50 border-b">
+                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          <th className="p-5">N°</th><th className="p-5">Date</th><th className="p-5">Client</th><th className="p-5">Paiement</th><th className="p-5 text-right">Montant</th><th className="p-5"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...sales].reverse()
+                          .filter(s => { const q = salesSearch.toLowerCase(); return !q || s.client.toLowerCase().includes(q) || s.number.toLowerCase().includes(q); })
+                          .map(s => (
+                            <tr key={s.id} className="border-b last:border-0 hover:bg-slate-50 text-sm">
+                              <td className="p-5 font-black text-slate-500">{s.number}</td>
+                              <td className="p-5 text-slate-500 whitespace-nowrap">{formatDateTime(s.date)}</td>
+                              <td className="p-5 font-bold">{s.client}</td>
+                              <td className="p-5">
+                                {s.paymentMethod === 'Crédit client' && !s.paid
+                                  ? <button onClick={() => markCreditPaid(s)} className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-orange-100 text-orange-700 hover:bg-orange-200" title="Marquer comme payé">Crédit – non payé</button>
+                                  : <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-green-100 text-green-700">{s.paymentMethod}</span>}
+                              </td>
+                              <td className="p-5 text-right font-black text-[#003366] whitespace-nowrap">{formatGNF(s.total)}</td>
+                              <td className="p-5 text-right"><button onClick={() => setInvoice(s)} className="p-2 rounded-xl text-slate-400 hover:text-[#003366] hover:bg-slate-100" title="Voir / imprimer le reçu"><Printer size={18} /></button></td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= JOURNAL CAISSE ================= */}
+            {activeTab === 'finance' && (() => {
+              const income = transactions.filter(t => t.type === 'ENTREE').reduce((a, t) => a + t.amount, 0);
+              const expense = transactions.filter(t => t.type === 'SORTIE').reduce((a, t) => a + t.amount, 0);
+              return (
+                <div className="space-y-6">
+                  <div className="flex flex-wrap justify-between items-center gap-4">
+                    <h3 className="text-2xl font-black text-[#003366]">Journal de caisse</h3>
+                    <button onClick={() => setModal({ type: 'transaction' })} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2"><Plus size={20} /> Nouvelle opération</button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <StatCard title="Total entrées" value={formatGNF(income)} icon={TrendingUp} color="green" />
+                    <StatCard title="Total dépenses" value={formatGNF(expense)} icon={TrendingDown} color="red" />
+                    <StatCard title="Solde" value={formatGNF(income - expense)} icon={Wallet} color="blue" />
+                  </div>
+                  {transactions.length === 0 ? <EmptyState icon={Wallet} text="Aucune opération enregistrée." /> : (
+                    <div className="bg-white rounded-[2rem] border shadow-sm overflow-x-auto">
+                      <table className="w-full text-left min-w-[600px]">
+                        <thead className="bg-slate-50 border-b">
+                          <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            <th className="p-5">Date</th><th className="p-5">Libellé</th><th className="p-5">Catégorie</th><th className="p-5 text-right">Montant</th><th className="p-5"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...transactions].reverse().map(t => (
+                            <tr key={t.id} className="border-b last:border-0 hover:bg-slate-50 text-sm">
+                              <td className="p-5 text-slate-500 whitespace-nowrap">{formatDateTime(t.date)}</td>
+                              <td className="p-5 font-bold">{t.label}</td>
+                              <td className="p-5 text-slate-500">{t.type === 'ENTREE' ? 'Recette' : (t.category || 'Divers')}</td>
+                              <td className={`p-5 text-right font-black whitespace-nowrap ${t.type === 'ENTREE' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'ENTREE' ? '+' : '−'} {formatGNF(t.amount)}</td>
+                              <td className="p-5 text-right">
+                                <button onClick={() => { if (confirm('Supprimer cette opération ?')) setTransactions(transactions.filter(x => x.id !== t.id)); }} className="p-2 rounded-xl text-slate-300 hover:text-red-500 hover:bg-red-50" title="Supprimer"><Trash2 size={16} /></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ================= PARC ENGINS ================= */}
+            {activeTab === 'fleet' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap justify-between items-center gap-4">
+                  <h3 className="text-2xl font-black text-[#003366]">Parc d'engins</h3>
+                  <button onClick={() => setModal({ type: 'vehicle' })} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2"><Plus size={20} /> Ajouter un engin</button>
+                </div>
+                {fleet.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {Object.keys(FLEET_STATUS).map(s => (
+                      <span key={s} className={`px-4 py-2 rounded-full text-xs font-black ${FLEET_STATUS[s]}`}>{s} : {fleet.filter(v => v.status === s).length}</span>
+                    ))}
+                  </div>
+                )}
+                {fleet.length === 0 ? (
+                  <EmptyState icon={Truck} text="Aucun engin enregistré."
+                    action={<button onClick={() => setModal({ type: 'vehicle' })} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold">Ajouter un engin</button>} />
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {fleet.map(v => (
+                      <div key={v.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                        {v.image
+                          ? <img src={v.image} alt="" className="w-full h-40 object-cover bg-slate-100" />
+                          : <div className="w-full h-28 bg-gradient-to-br from-[#003366] to-[#0099cc] flex items-center justify-center text-white/40"><Truck size={44} /></div>}
+                        <div className="p-5 flex-1 flex flex-col">
+                          <div className="flex justify-between items-start gap-2 mb-2">
+                            <div>
+                              <p className="font-black text-slate-800">{v.name}</p>
+                              <p className="text-xs text-slate-400 font-bold">{v.type}{v.plate && ` · ${v.plate}`}</p>
+                            </div>
+                            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${FLEET_STATUS[v.status]}`}>{v.status}</span>
+                          </div>
+                          {v.driver && <p className="text-sm text-slate-600">Chauffeur : <span className="font-bold">{v.driver}</span></p>}
+                          {v.notes && <p className="text-xs text-slate-500 mt-2 flex gap-1.5"><Wrench size={14} className="shrink-0 mt-0.5" /> {v.notes}</p>}
+                          <div className="mt-auto pt-4 flex gap-2">
+                            <select value={v.status} onChange={e => setFleet(fleet.map(x => x.id === v.id ? { ...x, status: e.target.value } : x))} className="flex-1 px-3 py-2 bg-slate-100 rounded-xl text-sm font-bold">
+                              {Object.keys(FLEET_STATUS).map(s => <option key={s}>{s}</option>)}
+                            </select>
+                            <button onClick={() => setModal({ type: 'vehicle', data: v })} className="p-2 rounded-xl text-slate-400 hover:text-[#003366] hover:bg-slate-100" title="Modifier"><Pencil size={18} /></button>
+                            <button onClick={() => { if (confirm(`Supprimer ${v.name} ?`)) setFleet(fleet.filter(x => x.id !== v.id)); }} className="p-2 rounded-xl text-slate-300 hover:text-red-500 hover:bg-red-50" title="Supprimer"><Trash2 size={18} /></button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= PARAMÈTRES ================= */}
+            {activeTab === 'settings' && (
+              <div className="space-y-6 max-w-2xl">
+                <h3 className="text-2xl font-black text-[#003366]">Paramètres</h3>
+                <div className="bg-white rounded-[2rem] border p-6 sm:p-8 space-y-4">
+                  <h4 className="font-black text-xs uppercase text-slate-400">Entreprise (affiché sur les reçus)</h4>
+                  <ImagePicker label="Logo" value={company.logo} onChange={(logo) => setCompany({ ...company, logo })} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Nom"><input value={company.name} onChange={e => setCompany({ ...company, name: e.target.value })} className={inputCls} /></Field>
+                    <Field label="Sous-titre"><input value={company.subtitle} onChange={e => setCompany({ ...company, subtitle: e.target.value })} className={inputCls} /></Field>
+                    <Field label="Adresse"><input value={company.address} onChange={e => setCompany({ ...company, address: e.target.value })} className={inputCls} /></Field>
+                    <Field label="Téléphone"><input value={company.phone} onChange={e => setCompany({ ...company, phone: e.target.value })} className={inputCls} placeholder="+224 …" /></Field>
+                  </div>
+                </div>
+                <div className="bg-white rounded-[2rem] border p-6 sm:p-8 space-y-4">
+                  <h4 className="font-black text-xs uppercase text-slate-400">Sauvegarde des données</h4>
+                  <p className="text-sm text-slate-500">Les données sont enregistrées dans ce navigateur. Exportez une sauvegarde pour ne rien perdre, ou pour transférer vos données sur un autre appareil.</p>
+                  <div className="flex flex-wrap gap-3">
+                    <button onClick={exportData} className="bg-[#003366] text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2"><Download size={18} /> Exporter</button>
+                    <label className="bg-slate-100 text-slate-700 px-5 py-3 rounded-2xl font-bold flex items-center gap-2 cursor-pointer hover:bg-slate-200">
+                      <Upload size={18} /> Importer
+                      <input type="file" accept="application/json,.json" className="hidden" onChange={importData} />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Modales */}
+        {modal && modal.type === 'product' && <ProductForm initial={modal.data} onSave={saveProduct} onClose={closeModal} />}
+        {modal && modal.type === 'restock' && <RestockForm product={modal.data} onSave={(q, c, r) => restock(modal.data, q, c, r)} onClose={closeModal} />}
+        {modal && modal.type === 'transaction' && <TransactionForm onSave={saveTransaction} onClose={closeModal} />}
+        {modal && modal.type === 'vehicle' && <VehicleForm initial={modal.data} onSave={saveVehicle} onClose={closeModal} />}
+        {invoice && <InvoiceView invoice={invoice} company={company} onClose={() => setInvoice(null)} />}
+
+        {toast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold shadow-xl z-[200] no-print">{toast}</div>
+        )}
       </div>
     );
   }
 
-  return (
-    <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
-      {/* Sidebar */}
-      <aside className="w-72 bg-[#003366] text-white flex flex-col p-8 shrink-0">
-        <div className="mb-12 text-center">
-          <GMTLogo className="w-20 h-20 mx-auto mb-4 bg-white p-1 rounded-full shadow-lg" />
-          <h1 className="font-black text-xl tracking-tighter">GUIMETRA</h1>
-          <p className="text-[9px] font-bold text-blue-300 uppercase tracking-[0.3em]">Construction SARL</p>
-        </div>
-
-        <nav className="flex-1 space-y-2">
-          {[
-            { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
-            { id: 'inventory', label: 'Stocks Matériaux', icon: Package },
-            { id: 'pos', label: 'Caisse & Vente', icon: ShoppingCart },
-            { id: 'finance', label: 'Journal Caisse', icon: Wallet },
-            { id: 'fleet', label: 'Parc Engins', icon: Truck },
-          ].map(item => (
-            <button 
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${activeTab === item.id ? 'bg-[#0099cc] shadow-lg text-white' : 'hover:bg-white/10 text-slate-300'}`}
-            >
-              <item.icon size={20} />
-              <span className="font-bold text-sm">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        
-        <div className="mt-auto p-4 bg-blue-900/30 rounded-2xl border border-blue-800/50">
-          <p className="text-[10px] uppercase font-black text-blue-300 mb-1">Utilisateur ID</p>
-          <p className="text-[10px] font-mono break-all opacity-70">{user?.uid || 'Non authentifié'}</p>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-20 bg-white border-b flex items-center justify-between px-10 shrink-0">
-          <h2 className="text-sm font-black uppercase tracking-widest text-slate-400">
-            {activeTab === 'dashboard' ? 'Vue d\'ensemble' : activeTab}
-          </h2>
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <p className="text-[10px] font-black text-slate-400 uppercase">Solde Caisse</p>
-              <p className="text-lg font-black text-[#003366]">{formatGNF(totalCaisse)}</p>
-            </div>
-            <div className="h-10 w-10 bg-[#0099cc] rounded-full border-2 border-white shadow-sm flex items-center justify-center text-white font-bold">
-               MA
-            </div>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-10">
-          {activeTab === 'dashboard' && (
-            <div className="space-y-10">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard title="Ventes Totales" value={formatGNF(sales.reduce((acc,s)=>acc+s.total,0))} icon={TrendingUp} color="bg-green-500" />
-                <StatCard title="Articles" value={products.length} icon={Package} color="bg-blue-500" />
-                <StatCard title="Alertes Stock" value={products.filter(p=>p.stock < 5).length} icon={AlertTriangle} color="bg-orange-500" />
-                <StatCard title="Opérations" value={transactions.length} icon={History} color="bg-purple-500" />
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
-                  <h3 className="font-black text-xs uppercase text-slate-400 mb-6 flex items-center gap-2">
-                    <History size={16} /> Dernières Ventes
-                  </h3>
-                  <div className="space-y-4">
-                    {sales.length === 0 ? (
-                      <p className="text-sm text-slate-400 italic">Aucune vente enregistrée</p>
-                    ) : (
-                      [...sales].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 5).map(s => (
-                        <div key={s.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
-                          <div>
-                            <p className="font-bold text-sm">{s.client}</p>
-                            <p className="text-[10px] text-slate-400">{new Date(s.date).toLocaleDateString()}</p>
-                          </div>
-                          <span className="font-black text-[#003366]">{formatGNF(s.total)}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div className="bg-[#003366] p-8 rounded-[2rem] text-white flex flex-col justify-between min-h-[250px]">
-                  <div>
-                    <h3 className="text-2xl font-black mb-2">Guimetra ERP</h3>
-                    <p className="text-blue-200 text-sm italic">Connecté au Cloud Sécurisé.</p>
-                  </div>
-                  <div className="mt-8">
-                     <button onClick={() => setActiveTab('pos')} className="bg-[#0099cc] px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:scale-105 transition-transform">
-                        <Plus size={18} /> Nouvelle Vente
-                     </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'inventory' && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-2xl font-black text-[#003366]">Inventaire des Matériaux</h3>
-                <button onClick={() => setModal({open: true, type: 'product'})} className="bg-[#003366] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2">
-                  <Plus size={20} /> Ajouter Article
-                </button>
-              </div>
-              <div className="bg-white rounded-[2rem] border overflow-hidden shadow-sm overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 border-b">
-                    <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      <th className="p-6">Désignation</th>
-                      <th className="p-6">Prix Unitaire</th>
-                      <th className="p-6">Stock Actuel</th>
-                      <th className="p-6 text-right text-transparent">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {products.length === 0 ? (
-                      <tr><td colSpan="4" className="p-10 text-center text-slate-400 italic">Aucun article en stock. Ajoutez-en un !</td></tr>
-                    ) : (
-                      products.map(p => (
-                        <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
-                          <td className="p-6">
-                            <p className="font-bold text-slate-700">{p.name}</p>
-                            <p className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">{p.unit || 'Unité'}</p>
-                          </td>
-                          <td className="p-6 font-black text-[#0099cc]">{formatGNF(p.price)}</td>
-                          <td className="p-6">
-                            <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase ${p.stock < 10 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                              {p.stock} {p.unit}
-                            </span>
-                          </td>
-                          <td className="p-6 text-right">
-                            <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', p.id))} className="text-slate-300 hover:text-red-500 transition-colors">
-                              <Trash2 size={18} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'pos' && (
-            <div className="flex flex-col lg:flex-row gap-8 h-full overflow-hidden">
-              <div className="flex-1 space-y-6 overflow-y-auto pr-2">
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {products.map(p => (
-                    <button 
-                      key={p.id} 
-                      onClick={() => addToCart(p)}
-                      disabled={p.stock <= 0}
-                      className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm text-left hover:border-[#0099cc] hover:shadow-md transition-all group disabled:opacity-50"
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="font-black text-slate-800 group-hover:text-[#0099cc] transition-colors">{p.name}</span>
-                        <Package size={16} className="text-slate-300" />
-                      </div>
-                      <p className="text-xl font-black text-[#003366]">{formatGNF(p.price)}</p>
-                      <p className="text-[10px] mt-2 text-slate-400 uppercase font-bold tracking-widest">En stock: {p.stock}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="w-full lg:w-96 bg-[#003366] rounded-[2.5rem] p-8 text-white flex flex-col shadow-xl shrink-0">
-                <div className="flex items-center gap-3 mb-8">
-                  <ShoppingCart className="text-[#0099cc]" />
-                  <h3 className="text-xl font-black">Panier</h3>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto space-y-3 min-h-[200px]">
-                  {cart.map((item, idx) => (
-                    <div key={idx} className="bg-white/5 p-4 rounded-2xl flex justify-between items-center border border-white/5">
-                      <div>
-                        <p className="font-bold text-sm">{item.name}</p>
-                        <p className="text-[10px] text-blue-300">{item.qty} x {formatGNF(item.price)}</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                         <span className="font-black text-xs">{formatGNF(item.price * item.qty)}</span>
-                         <button onClick={() => setCart(cart.filter((_,i)=>i!==idx))} className="text-red-400 hover:bg-red-500/20 p-1 rounded-lg transition-colors"><X size={14}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-8 pt-8 border-t border-white/10">
-                  <div className="flex justify-between items-end mb-6">
-                    <span className="text-blue-300 text-[10px] font-black uppercase tracking-[0.2em]">Total</span>
-                    <span className="text-3xl font-black text-[#0099cc]">
-                      {formatGNF(cart.reduce((acc,i)=>acc+(i.price*i.qty),0))}
-                    </span>
-                  </div>
-                  <input 
-                    id="client-name"
-                    placeholder="Nom du Client..." 
-                    className="w-full bg-white/10 border-none rounded-2xl p-4 mb-4 text-white placeholder:text-white/30 focus:ring-2 focus:ring-[#0099cc] outline-none"
-                  />
-                  <button 
-                    onClick={() => {
-                      const input = document.getElementById('client-name');
-                      processSale(input.value);
-                      input.value = "";
-                    }}
-                    disabled={cart.length === 0}
-                    className="w-full bg-[#0099cc] py-5 rounded-2xl font-black text-lg shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    Valider la Vente
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </main>
-
-      {/* Modal Ajout Article */}
-      {modal.open && modal.type === 'product' && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <form onSubmit={handleAddProduct} className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl relative">
-            <button type="button" onClick={() => setModal({open:false})} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600 transition-colors"><X /></button>
-            <h3 className="text-2xl font-black text-[#003366] mb-8">Nouveau Matériau</h3>
-            <div className="space-y-5">
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Désignation</label>
-                <input name="name" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" placeholder="ex: Ciment 42.5N" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Prix Unitaire</label>
-                  <input name="price" type="number" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" placeholder="GNF" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Unité</label>
-                  <input name="unit" placeholder="Sac, Tonne..." className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Stock Initial</label>
-                <input name="stock" type="number" required className="w-full p-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-[#0099cc] outline-none" />
-              </div>
-              <button type="submit" className="w-full bg-[#003366] text-white py-5 rounded-2xl font-black text-lg mt-4 shadow-lg flex items-center justify-center gap-3 hover:bg-[#002244] transition-all">
-                <Save size={20} /> Enregistrer
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Facture Imprimable */}
-      {invoice && (
-        <div className="fixed inset-0 bg-white z-[100] p-10 flex flex-col items-center overflow-y-auto">
-          <div className="w-full max-w-2xl bg-white border p-12 shadow-sm rounded-lg relative">
-            <button onClick={() => setInvoice(null)} className="print:hidden absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-xl font-black hover:bg-red-600 transition-all">FERMER X</button>
-            
-            <div className="flex justify-between items-start border-b-4 border-[#003366] pb-8 mb-8">
-              <div className="flex gap-4 items-center">
-                <GMTLogo className="w-20 h-20" />
-                <div>
-                   <h1 className="text-2xl font-black text-[#003366]">GUIMETRA</h1>
-                   <p className="text-xs font-black uppercase text-slate-500 tracking-widest">Construction SARL</p>
-                   <p className="text-[10px] font-bold">Conakry, République de Guinée</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-2xl font-black text-[#003366]">REÇU DE VENTE</p>
-                <p className="text-sm font-bold">N° {invoice.id.slice(-8).toUpperCase()}</p>
-                <p className="text-[10px] text-slate-400 mt-1">{new Date(invoice.date).toLocaleString('fr-FR')}</p>
-              </div>
-            </div>
-
-            <div className="mb-10 flex justify-between items-end">
-               <div>
-                  <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Facturé à</p>
-                  <p className="text-xl font-black text-[#003366]">{invoice.client}</p>
-               </div>
-               <div className="text-right">
-                  <p className="text-[10px] uppercase font-black text-slate-400 mb-1 tracking-widest">Statut</p>
-                  <p className="text-sm font-black text-green-600 uppercase tracking-widest">Payé / Livré</p>
-               </div>
-            </div>
-
-            <table className="w-full mb-10 text-left">
-              <thead>
-                <tr className="border-b-2 border-slate-900 text-[10px] uppercase font-black tracking-widest">
-                  <th className="py-4">Désignation</th>
-                  <th className="py-4 text-center">Qté</th>
-                  <th className="py-4 text-right">P.U</th>
-                  <th className="py-4 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoice.items.map((it, idx) => (
-                  <tr key={idx} className="border-b border-slate-100 text-sm">
-                    <td className="py-4 font-black text-slate-700">{it.name}</td>
-                    <td className="py-4 text-center font-bold">{it.qty}</td>
-                    <td className="py-4 text-right">{formatGNF(it.price)}</td>
-                    <td className="py-4 text-right font-black">{formatGNF(it.price * it.qty)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div className="flex justify-between items-end border-t-4 border-[#003366] pt-8 bg-slate-50 p-6 rounded-b-2xl">
-              <div className="text-[9px] italic text-slate-500 w-1/2 font-bold">
-                * Les marchandises vendues et livrées ne sont ni reprises ni échangées. <br/>
-                Merci de votre confiance en Guimetra Construction.
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Net à Payer</p>
-                <p className="text-4xl font-black text-[#003366]">{formatGNF(invoice.total)}</p>
-              </div>
-            </div>
-
-            <div className="mt-24 flex justify-between px-10">
-               <div className="text-center w-40">
-                  <p className="text-[10px] uppercase font-black text-slate-400 mb-16">Signature Client</p>
-                  <div className="border-b border-slate-300"></div>
-               </div>
-               <div className="text-center w-40">
-                  <p className="text-[10px] uppercase font-black text-slate-400 mb-16">Cachet Guimetra</p>
-                  <div className="border-b border-slate-300"></div>
-               </div>
-            </div>
-            
-            <div className="mt-16 text-center print:hidden flex gap-4 justify-center">
-              <button onClick={() => window.print()} className="bg-[#003366] text-white px-10 py-5 rounded-2xl font-black flex items-center gap-3 shadow-lg hover:bg-[#002244] transition-all">
-                <Printer size={20} /> Imprimer Reçu
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
