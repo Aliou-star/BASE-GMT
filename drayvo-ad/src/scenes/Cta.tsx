@@ -55,7 +55,7 @@ export const Cta: React.FC = () => {
           <path d="M6 6 L27 27 L6 48" fill="none" stroke={C.navy} strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
-      <svg width="110" height="130" viewBox="0 0 110 130" style={{ position: "absolute", left: mix(cursor, 980, 760), top: mix(cursor, 1760, 1320), opacity: prog(t, press - 0.6, 0.15) * (1 - prog(t, press + 0.9, 0.3)), scale: 1 - 0.12 * squeeze, filter: "drop-shadow(0 12px 18px rgba(0,0,0,0.5))" }}>
+      <svg width="110" height="130" viewBox="0 0 110 130" style={{ position: "absolute", left: mix(cursor, 1000, 930), top: mix(cursor, 1780, 1352), opacity: prog(t, press - 0.6, 0.15) * (1 - prog(t, press + 0.9, 0.3)), scale: 1 - 0.12 * squeeze, filter: "drop-shadow(0 12px 18px rgba(0,0,0,0.5))" }}>
         <path d="M14 8 L14 100 L40 76 L58 118 L76 110 L58 70 L94 70 Z" fill="#fff" stroke={C.navyDeep} strokeWidth="7" strokeLinejoin="round" />
       </svg>
     </AbsoluteFill>
